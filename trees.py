@@ -1,12 +1,13 @@
 import re
+import itertools
 
 class RootDeletedException(Exception):
     pass
 
-class Node(object):
-    def __init__(self, label, children):
+class Node:
+    def __init__(self, label, children=None):
         self.label = label
-        self.children = children
+        self.children = children or []
         for (i,child) in enumerate(self.children):
             if child.parent is not None:
                 child.detach()
@@ -17,6 +18,13 @@ class Node(object):
 
     def __str__(self):
         return self.label
+
+    def _pretty_print(self):
+        p = PrettyPrinter()
+        for child in self.children:
+            p.append(child._pretty_print())
+        p.root(self.label)
+        return p
 
     def _subtree_str(self):
         if len(self.children) != 0:
@@ -75,12 +83,16 @@ class Node(object):
                 for leaf in child.leaves():
                     yield leaf
 
-class Tree(object):
+class Tree:
     def __init__(self, root):
         self.root = root
 
     def __str__(self):
         return self.root._subtree_str()
+
+    def pretty_print(self):
+        p = self.root._pretty_print()
+        return str(p)
 
     interior_node = re.compile(r"\s*\(([^\s)]*)")
     close_brace = re.compile(r"\s*\)")
@@ -188,30 +200,7 @@ class Tree(object):
                     prev = Node(vlabel, [prev, child])
                 node.insert_child(0, prev)
 
-    def binarize(self):
-        """ Binarize into a left-branching or right-branching structure
-        using linguistically motivated heuristics. Currently, the heuristic
-        is extremely simple: SQ is right-branching, everything else is left-branching. """
-        nodes = list(self.bottomup())
-        for node in nodes:
-            if len(node.children) > 2:
-                if node.label in ['SQ']:
-                    # create a right-branching structure
-                    children = list(node.children)
-                    children.reverse()
-                    vlabel = node.label+"*"
-                    prev = children[0]
-                    for child in children[1:-1]:
-                        prev = Node(vlabel, [child, prev])
-                    node.append_child(prev)
-                else:
-                    # create a left-branching structure
-                    vlabel = node.label+"*"
-                    children = list(node.children)
-                    prev = children[0]
-                    for child in children[1:-1]:
-                        prev = Node(vlabel, [prev, child])
-                    node.insert_child(0, prev)
+    binarize = binarize_right
 
     def unbinarize(self):
         """ Undo binarization by removing any nodes ending with *. """
@@ -225,9 +214,94 @@ class Tree(object):
         assert len(roots) == 1
         self.root = roots[0]
 
+class PrettyPrinter:
+    def __init__(self):
+        self.roots = []
+        self.lines = [] # (left margin, string)
+
+    def width(self):
+        if len(self.lines) == 0:
+            return 0
+        else:
+            return max(left+len(string) for (left, string) in self.lines)
+
+    def root(self, string):
+        if len(self.roots) == 0:
+            self.roots = [len(string)//2]
+            self.lines[0:0] = [(0, string)]
+            return
+            
+        w = self.width()
+
+        newroot = (self.roots[0] + self.roots[-1])//2
+        nodeline = (newroot-(len(string)-1)//2, string)
+
+        if nodeline[0] < 0:
+            shift = -nodeline[0]
+            nodeline = (0, string)
+            self.lines = [(left+shift, s) for (left, s) in self.lines]
+            self.roots = [r+shift for r in self.roots]
+
+        if len(self.roots) == 1:
+            edgeline = (self.roots[0], '│')
+            self.lines[0:0] = [nodeline, edgeline]
+        elif len(self.roots) > 1:
+            top = ['─'] * (self.roots[-1]-self.roots[0]+1)
+            top[0] = '┌'
+            for i in range(1, len(self.roots)-1):
+                top[self.roots[i]-self.roots[0]] = '┬'
+            top[self.roots[-1]-self.roots[0]] = '┐'
+            i = newroot-self.roots[0]
+            top[i] = {'─':'┴', '┬':'┼', '┌':'├', '┐':'┤'}[top[i]]
+            edgeline = (self.roots[0], ''.join(top))
+            self.roots = [newroot]
+            self.lines[0:0] = [nodeline, edgeline]
+        
+    def append(self, other):
+        w = self.width()
+
+        # How close can we put them without a collision?
+        minspace = None
+        for (sline, oline) in zip(self.lines, other.lines):
+            sleft, sstring = sline
+            oleft, ostring = oline
+            space = w-sleft-len(sstring) + oleft
+            if minspace is None or space < minspace:
+                minspace = space
+        if minspace is None: minspace = 0
+        
+        if w > 0:
+            offset = -minspace+1
+        else:
+            offset = 0
+        offset = max(-1, offset)
+        
+        new = []
+        for (sline, oline) in itertools.zip_longest(self.lines, other.lines, fillvalue=None):
+            if sline is None:
+                oleft, ostring = oline
+                new.append((w+offset+oleft, ostring))
+            elif oline is None:
+                new.append(sline)
+            else:
+                sleft, sstring = sline
+                sright = w - sleft-len(sstring)
+                oleft, ostring = oline
+                new.append((sleft, sstring + ' '*(sright + offset + oleft) + ostring))
+        self.lines = new
+        self.roots.extend([w+offset+r for r in other.roots])
+
+    def __str__(self):
+        ret = []
+        for (left, string) in self.lines:
+            ret.append(' '*left + string)
+        return '\n'.join(ret)
+
 if __name__ == "__main__":
     import sys
     for line in sys.stdin:
         t = Tree.from_str(line)
-        print(t)
-        
+        if t.root is not None:
+            print(t.pretty_print())
+            print()
+            
