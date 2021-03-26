@@ -2,18 +2,18 @@
 
 import sys, fileinput
 import collections
-import tree
+import trees
 
 count = collections.defaultdict(int)
 
-trees = []
+ts = []
 for line in fileinput.input():
-    t = tree.Tree.from_str(line)
+    t = trees.Tree.from_str(line)
     for leaf in t.leaves():
         count[leaf.label] += 1
-    trees.append(t)
+    ts.append(t)
 
-for t in trees:
+for t in ts:
     for leaf in t.leaves():
         if count[leaf.label] < 2:
             leaf.label = "<unk>"

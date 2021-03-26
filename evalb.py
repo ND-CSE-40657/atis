@@ -2,9 +2,7 @@
 
 import sys
 import collections
-import tree
-from six import iteritems, itervalues
-from six.moves import zip
+import trees
 
 try:
     _, parsefilename, goldfilename = sys.argv
@@ -32,18 +30,18 @@ def brackets(t):
 matchcount = parsecount = goldcount = 0
 
 for parseline, goldline in zip(open(parsefilename), open(goldfilename)):
-    gold = tree.Tree.from_str(goldline)
+    gold = trees.Tree.from_str(goldline)
     goldbrackets = brackets(gold)
-    goldcount += sum(itervalues(goldbrackets))
+    goldcount += sum(goldbrackets.values())
 
     if parseline.strip() in ["0", ""]:
         continue
     
-    parse = tree.Tree.from_str(parseline)
+    parse = trees.Tree.from_str(parseline)
     parsebrackets = brackets(parse)
-    parsecount += sum(itervalues(parsebrackets))
+    parsecount += sum(parsebrackets.values())
 
-    for bracket,count in iteritems(parsebrackets):
+    for bracket,count in parsebrackets.items():
         matchcount += min(count,goldbrackets[bracket])
 
 print("%s\t%d brackets" % (parsefilename, parsecount))

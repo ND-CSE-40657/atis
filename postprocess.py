@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
 import sys, fileinput
-import tree
+import trees
 
 for line in fileinput.input():
     try:
-        t = tree.Tree.from_str(line)
+        t = trees.Tree.from_str(line)
 
         t.restore_unit()
         t.unbinarize()
