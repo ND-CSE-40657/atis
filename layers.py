@@ -72,42 +72,45 @@ class RNN(torch.nn.Module):
         dims: Size of both the input and output vectors (int)
 
     The resulting RNN object can be used in two ways:
-      - Step by step, using start() and step()
+      - Step by step, using start(), input(), and output()
       - On a whole sequence at once, using sequence()
     Please see the documentation for those methods.
+
+    This implementation adds a _residual connection_, which just means
+    that output vector is the standard output vector plus the input
+    vector. This helps against overfitting, but makes the
+    implementation slightly more complicated.
     """
     
     def __init__(self, dims):
         super().__init__()
-        self.h0 = torch.zeros(dims)
+        self.h0 = torch.nn.Parameter(torch.empty(dims))
         self.W_hi = torch.nn.Parameter(torch.empty(dims, dims))
         self.W_hh = torch.nn.Parameter(torch.empty(dims, dims))
         self.b = torch.nn.Parameter(torch.empty(dims))
+        torch.nn.init.normal_(self.h0, std=0.01)
         torch.nn.init.normal_(self.W_hi, std=0.01)
         torch.nn.init.normal_(self.W_hh, std=0.01)
         torch.nn.init.normal_(self.b, std=0.01)
 
     def start(self):
-        """Return the initial hidden-state vector."""
-        return self.h0
+        """Return the initial state, which is a pair consisting of the
+        most recent input (here 0 because there's no previous input) and h."""
+        return (0, self.h0)
 
-    def step(self, h_prev, inp):
-        """Run one step of the RNN:
-
-        1. Read in an input vector (inp) and compute the new hidden
-           state (h_cur) from the old hidden state (h_prev).
-        2. Compute an output vector (out) based on the new hidden
-           state (h_cur).
+    def input(self, state, inp):
+        """Given the old state (state), read in an input vector (inp) and
+        compute the new state.
 
         Arguments:
-            h_prev: Old hidden-state vector (tensor of size dims)
+            state:  Pair consisting of h and input (tensor of size dims)
             inp:    Input vector (tensor of size dims)
 
-        Returns a pair (out, h_cur), where:
-            out:    Output vector (tensor of size dims)
-            h_cur:  New hidden-state vector (tensor of size dims)
+        Returns:    Pair consisting of new h and inp
 
         """
+
+        _, h_prev = state
         
         dims = self.b.size()[0]
         if h_prev.size()[-1] != dims:
@@ -116,21 +119,25 @@ class RNN(torch.nn.Module):
             raise TypeError(f'Input vector must have size {dims}')
         
         h_cur = torch.tanh(bmv(self.W_hi, inp) + bmv(self.W_hh, h_prev) + self.b)
+        return (inp, h_cur)
+
+    def output(self, state):
+        """Compute an output vector based on the state.
+
+        Arguments:
+            state:  Pair consisting of h and input (tensor of size dims)
+        Returns a pair (out, h_cur), where:
+            out:    Output vector (tensor of size dims)
+        """
         
-        # In a standard RNN, the output vector and the new
-        # hidden-state vector would be the same. But here we employ a
-        # trick called a _residual connection_, which helps against
-        # overfitting. (This is why the input and output vectors have
-        # to have the same size.)
-        out = inp + h_cur
-        
-        return (out, h_cur)
+        inp, h = state
+        return inp + h
 
     def sequence(self, inputs):
         """Run the RNN on an input sequence.
 
         Argument:
-            input: Input vectors (tensor of size n,dims)
+            Input vectors (tensor of size n,dims)
 
         Return:
             Output vectors (tensor of size n,dims)
@@ -143,22 +150,29 @@ class RNN(torch.nn.Module):
 
         h = self.start()
         outputs = []
-        for i in inputs:
-            o, h = self.step(h, i)
+        for inp in inputs:
+            h = self.input(h, inp)
+            o = self.output(h)
             outputs.append(o)
         return torch.stack(outputs)
     
-class LinearLayer(torch.nn.Module):
-    """Linear layer.
+class TanhLayer(torch.nn.Module):
+    """Tanh layer.
 
     The constructor takes these arguments:
         input_dims:  Size of input vectors (int)
         output_dims: Size of output vectors (int)
+        residual:    Add a residual connection (bool)
 
-    The resulting LinearLayer object is callable. See forward().
+    The resulting TanhLayer object is callable. See forward().
+
+    If residual is True, then input_dims and output_dims must be equal.
     """
-    def __init__(self, input_dims, output_dims):
+    def __init__(self, input_dims, output_dims, residual=False):
         super().__init__()
+        self.residual = residual
+        if residual and input_dims != output_dims:
+            raise ValueError("A residual connection requires the same number of input and output dimensions.")
         self.W = torch.nn.Parameter(torch.empty(output_dims, input_dims))
         self.b = torch.nn.Parameter(torch.empty(output_dims))
         torch.nn.init.normal_(self.W, std=0.01)
@@ -184,41 +198,12 @@ class LinearLayer(torch.nn.Module):
         
         input_dims = self.W.size()[-1]
         if inp.size()[-1] != input_dims:
-            raise TypeError(f"The inputs must have size {input_dims}")
+            raise TypeError(f"The inputs must have size {input_dims} (not {inp.size()[-1]})")
         
-        return bmv(self.W, inp) + self.b
-
-class ResidualTanhLayer(torch.nn.Module):
-    """Tanh layer with residual connection.
-
-    The constructor takes these arguments:
-        dims:  Size of input and output vectors (int)
-
-    The resulting ResidualTanhLayer object is callable. See forward().
-    """
-    def __init__(self, dims):
-        super().__init__()
-        self.layer = LinearLayer(dims, dims)
-
-    def forward(self, inp):
-        """Works on either single vectors or sequences of vectors.
-
-        Argument:
-            inp: Input vector (tensor of size dims)
-
-        Return:
-            Output vector (tensor of size dims)
-
-        *or*
-
-        Argument:
-            inp: Input vectors (tensor of size n,dims)
-
-        Return:
-            Output vectors (tensor of size n,dims)
-        """
-        
-        return torch.tanh(self.layer(inp)) + inp
+        out = torch.tanh(bmv(self.W, inp) + self.b)
+        if self.residual:
+            out = out + inp
+        return out
 
 class SoftmaxLayer(torch.nn.Module):
     """Softmax layer.
@@ -350,8 +335,8 @@ class MaskedSelfAttention(torch.nn.Module):
     The MaskedSelfAttention constructor takes one argument:
         dims: Size of input and output vectors (int)
 
-    The resulting object has start() and step() methods; please see
-    documentation for those methods.
+    The resulting object has start(), input(), and output() methods;
+    please see documentation for those methods.
     """
     
     def __init__(self, dims):
@@ -359,29 +344,37 @@ class MaskedSelfAttention(torch.nn.Module):
         self.W_Q = torch.nn.Parameter(torch.empty(dims, dims))
         self.W_K = torch.nn.Parameter(torch.empty(dims, dims))
         self.W_V = torch.nn.Parameter(torch.empty(dims, dims))
-        self.empty = torch.empty((0, dims))
+        self.initial = torch.nn.Parameter(torch.empty(dims))
         torch.nn.init.normal_(self.W_Q, std=0.01)
         torch.nn.init.normal_(self.W_K, std=0.01)
         torch.nn.init.normal_(self.W_V, std=0.01)
+        torch.nn.init.normal_(self.initial, std=0.01)
 
     def start(self):
         """Return the initial list of previous inputs.
 
         For MaskedSelfAttention, the "state" is the list of previous
-        inputs. This list is initially empty.
+        inputs.
         """
-        return self.empty
 
-    def step(self, prev_inps, inp):
-        """Run one step of masked self-attention:
+        # Initially there are no previous inputs, but we have to have
+        # something. Most implementations avoid this problem by
+        # prepending <BOS>; here, the parameter self.initial is
+        # basically the encoding of <BOS>.
+        dims = self.initial.size()[0]
+        return torch.empty(0, dims)
 
-        1. Read in an input vector and append it to the list of previous inputs.
-        2. Compute an output vector based on the new list of inputs.
-        """
+    def input(self, prev_inps, inp):
+        """Read in an input vector and append it to the list of previous inputs."""
         inputs = torch.cat([prev_inps, inp.unsqueeze(0)], dim=0)
+
+        return inputs
         
+    def output(self, inputs):
+        """Compute an output vector based on the new list of inputs."""
+
         # Linearly transform inputs in three ways to get queries, keys, values
-        query = bmv(self.W_Q, inp)
+        query = bmv(self.W_Q, inputs[-1])
         keys = bmv(self.W_K, inputs)
         values = bmv(self.W_V, inputs)
 
@@ -389,7 +382,6 @@ class MaskedSelfAttention(torch.nn.Module):
         output = attention(query, keys, values)
         
         # Residual connection (see RNN for explanation)
-        output = output + inp
-        
-        return (output, inputs)
-    
+        output = output + inputs[-1]
+
+        return output
