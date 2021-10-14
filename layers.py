@@ -156,6 +156,55 @@ class RNN(torch.nn.Module):
             outputs.append(o)
         return torch.stack(outputs)
     
+class LinearLayer(torch.nn.Module):
+    """Lnear layer.
+
+    The constructor takes these arguments:
+        input_dims:  Size of input vectors (int)
+        output_dims: Size of output vectors (int)
+        residual:    Add a residual connection (bool)
+
+    The resulting LinearLayer object is callable. See forward().
+
+    If residual is True, then input_dims and output_dims must be equal.
+    """
+    def __init__(self, input_dims, output_dims, residual=False):
+        super().__init__()
+        self.residual = residual
+        if residual and input_dims != output_dims:
+            raise ValueError("A residual connection requires the same number of input and output dimensions.")
+        self.W = torch.nn.Parameter(torch.empty(output_dims, input_dims))
+        self.b = torch.nn.Parameter(torch.empty(output_dims))
+        torch.nn.init.normal_(self.W, std=0.01)
+        torch.nn.init.normal_(self.b, std=0.01)
+
+    def forward(self, inp):
+        """Works on either single vectors or sequences of vectors.
+
+        Argument:
+            inp: Input vector (tensor of size input_dims)
+
+        Return:
+            Output vector (tensor of size output_dims)
+
+        *or*
+
+        Argument:
+            inp: Input vectors (tensor of size n,input_dims)
+
+        Return:
+            Output vectors (tensor of size n,output_dims)
+        """
+        
+        input_dims = self.W.size()[-1]
+        if inp.size()[-1] != input_dims:
+            raise TypeError(f"The inputs must have size {input_dims} (not {inp.size()[-1]})")
+        
+        out = bmv(self.W, inp) + self.b
+        if self.residual:
+            out = out + inp
+        return out
+
 class TanhLayer(torch.nn.Module):
     """Tanh layer.
 
@@ -372,6 +421,8 @@ class MaskedSelfAttention(torch.nn.Module):
         
     def output(self, inputs):
         """Compute an output vector based on the new list of inputs."""
+        if len(inputs) == 0:
+            return self.initial
 
         # Linearly transform inputs in three ways to get queries, keys, values
         query = bmv(self.W_Q, inputs[-1])
