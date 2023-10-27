@@ -1,14 +1,7 @@
 #!/usr/bin/env python
 
-import sys
 import collections
 import trees
-
-try:
-    _, parsefilename, goldfilename = sys.argv
-except:
-    sys.stderr.write("usage: evalb.py <parse-file> <gold-file>\n")
-    sys.exit(1)
 
 def _brackets_helper(node, i, result):
     i0 = i
@@ -27,26 +20,35 @@ def brackets(t):
     _brackets_helper(t.root, 0, result)
     return result
 
-matchcount = parsecount = goldcount = 0
+def score(ts1, ts2):
+    c1 = c2 = m = 0
+    if len(ts1) != len(ts2):
+        raise ValueError("two lists of trees should have same length")
+    for t1, t2 in zip(ts1, ts2):
+        b1 = brackets(t1)
+        b2 = brackets(t2)
+        c1 += sum(b1.values())
+        c2 += sum(b2.values())
+        for b,c in b1.items():
+            m += min(c, b2[b])
+    return (m, c1, c2)
 
-for parseline, goldline in zip(open(parsefilename), open(goldfilename)):
-    gold = trees.Tree.from_str(goldline)
-    goldbrackets = brackets(gold)
-    goldcount += sum(goldbrackets.values())
+if __name__ == "__main__":
+    import sys
 
-    if parseline.strip() in ["0", ""]:
-        continue
-    
-    parse = trees.Tree.from_str(parseline)
-    parsebrackets = brackets(parse)
-    parsecount += sum(parsebrackets.values())
+    try:
+        _, parsefilename, goldfilename = sys.argv
+    except:
+        sys.stderr.write("usage: evalb.py <parse-file> <gold-file>\n")
+        sys.exit(1)
 
-    for bracket,count in parsebrackets.items():
-        matchcount += min(count,goldbrackets[bracket])
+    parsetrees = [trees.Tree.from_str(line) for line in open(parsefilename)]
+    goldtrees = [trees.Tree.from_str(line) for line in open(goldfilename)]
+    matchcount, parsecount, goldcount = score(parsetrees, goldtrees)
 
-print("%s\t%d brackets" % (parsefilename, parsecount))
-print("%s\t%d brackets" % (goldfilename, goldcount))
-print("matching\t%d brackets" % matchcount)
-print("precision\t%s" % (float(matchcount)/parsecount))
-print("recall\t%s" % (float(matchcount)/goldcount))
-print("F1\t%s" % (2./(goldcount/float(matchcount) + parsecount/float(matchcount))))
+    print(f"{parsefilename}\t{parsecount} brackets")
+    print(f"{goldfilename}\t{goldcount} brackets")
+    print(f"matching\t{matchcount} brackets")
+    print(f"precision\t{matchcount/parsecount}")
+    print(f"recall\t{matchcount/goldcount}")
+    print(f"F1\t{2/(goldcount/matchcount + parsecount/matchcount)}")
