@@ -42,8 +42,18 @@ if __name__ == "__main__":
         sys.stderr.write("usage: evalb.py <parse-file> <gold-file>\n")
         sys.exit(1)
 
-    parsetrees = [trees.Tree.from_str(line) for line in open(parsefilename)]
-    goldtrees = [trees.Tree.from_str(line) for line in open(goldfilename)]
+    parsetrees = []
+    goldtrees = []
+    for parseline, goldline in zip(open(parsefilename), open(goldfilename)):
+        goldtree = trees.Tree.from_str(goldline)
+        goldtrees.append(goldtree)
+        if parseline.strip() == '':
+            # Make a fake tree that at least gets TOP correct
+            parsetree = trees.Tree(trees.Node('TOP', [trees.Node('UH', [trees.Node(w)]) for w in goldtree.leaves()]))
+        else:
+            parsetree = trees.Tree.from_str(parseline)
+        parsetrees.append(parsetree)
+
     matchcount, parsecount, goldcount = score(parsetrees, goldtrees)
 
     print(f"{parsefilename}\t{parsecount} brackets")
@@ -51,4 +61,4 @@ if __name__ == "__main__":
     print(f"matching\t{matchcount} brackets")
     print(f"precision\t{matchcount/parsecount}")
     print(f"recall\t{matchcount/goldcount}")
-    print(f"F1\t{2/(goldcount/matchcount + parsecount/matchcount)}")
+    print(f"F1\t{2*matchcount/(goldcount + parsecount)}")
